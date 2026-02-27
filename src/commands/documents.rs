@@ -517,7 +517,7 @@ async fn delete_document(
         return Ok(());
     }
 
-    if !force {
+    if !force && !crate::is_yes() {
         use dialoguer::Confirm;
         let confirm = Confirm::new()
             .with_prompt(format!("Delete document {}?", id))

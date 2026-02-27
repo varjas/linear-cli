@@ -374,7 +374,7 @@ async fn update_milestone(
 }
 
 async fn delete_milestone(id: &str, force: bool) -> Result<()> {
-    if !force {
+    if !force && !crate::is_yes() {
         anyhow::bail!("Delete requires --force flag. Use: linear milestones delete {} --force", id);
     }
 

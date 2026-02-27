@@ -338,7 +338,7 @@ fn delete_template(name: &str, force: bool, output: &OutputOptions) -> Result<()
         anyhow::bail!("Template not found");
     }
 
-    if !force {
+    if !force && !crate::is_yes() {
         anyhow::bail!("Delete requires --force flag. Use: linear templates delete {} --force", name);
     }
 

@@ -519,7 +519,7 @@ async fn delete_webhook(id: &str, force: bool, output: &OutputOptions) -> Result
         return Ok(());
     }
 
-    if !force {
+    if !force && !crate::is_yes() {
         use dialoguer::Confirm;
         let confirm = Confirm::new()
             .with_prompt(format!("Delete webhook {}?", id))
@@ -786,32 +786,72 @@ async fn handle_connection(
 ) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // Read request with timeout
-    let mut buf = vec![0u8; 65536];
-    let n = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        stream.read(&mut buf),
-    )
-    .await
-    .context("Read timeout")?
-    .context("Read error")?;
+    // Read headers first (up to 8KB should be plenty)
+    let mut header_buf = vec![0u8; 8192];
+    let mut header_len = 0;
+    let header_end;
 
-    if n == 0 {
-        return Ok(());
+    loop {
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            stream.read(&mut header_buf[header_len..]),
+        )
+        .await
+        .context("Read timeout")?
+        .context("Read error")?;
+
+        if n == 0 {
+            return Ok(());
+        }
+        header_len += n;
+
+        // Look for end of headers
+        if let Some(pos) = header_buf[..header_len]
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+        {
+            header_end = pos;
+            break;
+        }
+
+        if header_len >= header_buf.len() {
+            let response = "HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\n\r\n";
+            stream.write_all(response.as_bytes()).await?;
+            return Ok(());
+        }
     }
 
-    let request = String::from_utf8_lossy(&buf[..n]);
+    let headers_str = String::from_utf8_lossy(&header_buf[..header_end]).to_string();
 
-    // Parse HTTP request to extract headers and body
-    let parts: Vec<&str> = request.splitn(2, "\r\n\r\n").collect();
-    if parts.len() < 2 {
-        let response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
-        stream.write_all(response.as_bytes()).await?;
-        return Ok(());
+    // Parse Content-Length from headers
+    let content_length: usize = headers_str
+        .lines()
+        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split_once(':'))
+        .and_then(|(_, v)| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    // Collect body: bytes already read past headers + remaining
+    let body_start = header_end + 4; // skip \r\n\r\n
+    let already_read = header_len - body_start;
+    let mut body_bytes = Vec::with_capacity(content_length.max(already_read));
+    body_bytes.extend_from_slice(&header_buf[body_start..header_len]);
+
+    // Read remaining body bytes if needed
+    if body_bytes.len() < content_length {
+        let remaining = content_length - body_bytes.len();
+        let mut rest = vec![0u8; remaining];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            stream.read_exact(&mut rest),
+        )
+        .await
+        .context("Body read timeout")?
+        .context("Body read error")?;
+        body_bytes.extend_from_slice(&rest);
     }
 
-    let headers_str = parts[0];
-    let body = parts[1];
+    let body = String::from_utf8_lossy(&body_bytes).to_string();
 
     // Check it's a POST
     if !headers_str.starts_with("POST") {
@@ -853,7 +893,7 @@ async fn handle_connection(
     }
 
     // Parse body as JSON
-    let body_json: serde_json::Value = match serde_json::from_str(body) {
+    let body_json: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(_) => {
             let response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";

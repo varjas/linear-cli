@@ -622,6 +622,15 @@ async fn list_issues(
     )
     .await?;
 
+    if count_only {
+        if output.is_json() || output.has_template() {
+            print_json_owned(serde_json::json!({"count": issues.len()}), output)?;
+        } else {
+            println!("{}", issues.len());
+        }
+        return Ok(());
+    }
+
     if output.is_json() || output.has_template() {
         print_json_owned(serde_json::json!(issues), output)?;
         return Ok(());
@@ -636,16 +645,7 @@ async fn list_issues(
 
     ensure_non_empty(&issues, output)?;
     if issues.is_empty() {
-        if count_only {
-            println!("0");
-        } else {
-            println!("No issues found.");
-        }
-        return Ok(());
-    }
-
-    if count_only {
-        println!("{}", issues.len());
+        println!("No issues found.");
         return Ok(());
     }
 
@@ -1535,7 +1535,8 @@ fn read_json_data(data: Option<&str>) -> Result<Option<Value>> {
 }
 
 async fn delete_issue(id: &str, force: bool, agent_opts: AgentOptions) -> Result<()> {
-    if !force && !agent_opts.quiet {
+    let skip_confirm = force || crate::is_yes();
+    if !skip_confirm && !agent_opts.quiet {
         let confirm = dialoguer::Confirm::new()
             .with_prompt(format!("Delete issue {}? This cannot be undone", id))
             .default(false)
@@ -1545,7 +1546,7 @@ async fn delete_issue(id: &str, force: bool, agent_opts: AgentOptions) -> Result
             println!("Cancelled.");
             return Ok(());
         }
-    } else if !force && agent_opts.quiet {
+    } else if !skip_confirm && agent_opts.quiet {
         // In quiet mode without force, require --force
         anyhow::bail!("Use --force to delete in quiet mode");
     }

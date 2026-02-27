@@ -551,7 +551,7 @@ async fn delete_view(name_or_id: &str, force: bool, output: &OutputOptions) -> R
         return Ok(());
     }
 
-    if !force {
+    if !force && !crate::is_yes() {
         use dialoguer::Confirm;
         let confirm = Confirm::new()
             .with_prompt(format!("Delete custom view {}?", name_or_id))

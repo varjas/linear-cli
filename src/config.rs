@@ -217,11 +217,13 @@ pub fn config_get(key: &str, raw: bool) -> Result<()> {
     match key.to_lowercase().as_str() {
         "api-key" | "api_key" => {
             let api_key = get_api_key()?;
-            if raw || api_key.len() <= 12 {
+            if raw {
                 println!("{}", api_key);
-            } else {
-                let masked = format!("{}...{}", &api_key[..8], &api_key[api_key.len() - 4..]);
+            } else if api_key.len() > 8 {
+                let masked = format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..]);
                 println!("{}", masked);
+            } else {
+                println!("lin_***");
             }
         }
         "profile" => {

@@ -237,7 +237,7 @@ fn matches_filters(value: &Value, filters: &[FilterExpr]) -> bool {
         for part in &filter.path {
             match current.get(part.as_str()) {
                 Some(next) => current = next,
-                None => return false,
+                None => return matches!(filter.op, FilterOp::NotEq),
             }
         }
         let actual = value_to_string(current).to_lowercase();
