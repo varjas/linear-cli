@@ -2176,7 +2176,8 @@ mod tests {
             "fromPriority": 3.0,
             "toPriority": 1.0
         });
-        assert_eq!(format_history_entry(&entry), "Priority: Normal → Urgent");
+        let expected = format!("Priority: Normal → {}", "Urgent".red());
+        assert_eq!(format_history_entry(&entry), expected);
     }
 
     #[test]

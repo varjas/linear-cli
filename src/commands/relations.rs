@@ -286,7 +286,7 @@ async fn add_relation(
     let client = LinearClient::new()?;
 
     let mutation = r#"
-        mutation($issueId: String!, $relatedIssueId: String!, $type: String!) {
+        mutation($issueId: String!, $relatedIssueId: String!, $type: IssueRelationType!) {
             issueRelationCreate(input: {
                 issueId: $issueId
                 relatedIssueId: $relatedIssueId

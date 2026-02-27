@@ -27,14 +27,12 @@ mod tests {
 
     #[test]
     fn test_priority_urgent() {
-        let result = priority_to_string(Some(1));
-        assert!(result.contains("Urgent"));
+        assert_eq!(priority_to_string(Some(1)), "Urgent".red().to_string());
     }
 
     #[test]
     fn test_priority_high() {
-        let result = priority_to_string(Some(2));
-        assert!(result.contains("High"));
+        assert_eq!(priority_to_string(Some(2)), "High".yellow().to_string());
     }
 
     #[test]
@@ -44,8 +42,7 @@ mod tests {
 
     #[test]
     fn test_priority_low() {
-        let result = priority_to_string(Some(4));
-        assert!(result.contains("Low"));
+        assert_eq!(priority_to_string(Some(4)), "Low".dimmed().to_string());
     }
 
     #[test]
