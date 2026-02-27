@@ -1,4 +1,5 @@
 pub mod api;
+pub mod attachments;
 pub mod auth;
 pub mod bulk;
 pub mod cache;
@@ -17,10 +18,12 @@ pub mod labels;
 pub mod metrics;
 pub mod milestones;
 pub mod notifications;
+pub mod project_updates;
 pub mod projects;
 pub mod relations;
 pub mod roadmaps;
 pub mod search;
+pub mod sprint;
 pub mod statuses;
 pub mod sync;
 pub mod teams;
