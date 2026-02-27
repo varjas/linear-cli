@@ -137,13 +137,16 @@ linear-cli c delete CYCLE_ID
 
 ### Sprint Planning
 
-Plan and manage cycle-based sprints with progress visualization.
+Plan and manage cycle-based sprints with progress visualization, burndown charts, and velocity tracking.
 
 ```bash
 linear-cli sprint status -t ENG                  # Current sprint status
 linear-cli sp progress -t ENG                    # Progress bar visualization
 linear-cli sp plan -t ENG                        # Next sprint's planned issues
 linear-cli sp carry-over -t ENG --force          # Move incomplete to next cycle
+linear-cli sp burndown -t ENG                    # ASCII burndown chart
+linear-cli sp velocity -t ENG                    # Velocity across past 6 sprints
+linear-cli sp velocity -t ENG -n 10              # Velocity across past 10 sprints
 ```
 
 ### Documents, Labels, Comments
@@ -561,7 +564,7 @@ npx skills add Finesssee/linear-cli --skill linear-workflow
 - **OAuth 2.0 + PKCE** authentication alongside API key auth
 - **Dynamic shell completions** for bash, zsh, fish, and PowerShell
 - **Import/Export** with round-trip CSV and JSON support
-- **Sprint planning** with progress bars and carry-over between cycles
+- **Sprint planning** with progress bars, burndown charts, velocity tracking, and carry-over between cycles
 - **Webhook listener** with HMAC-SHA256 signature verification
 - **Watch mode** for real-time polling on issues, projects, and teams
 - **Custom views** that can be applied to issue and project lists
@@ -590,7 +593,7 @@ npx skills add Finesssee/linear-cli --skill linear-workflow
 | Commands | ~10 | ~10 | **50+** |
 | Agent Skills | No | No | **27 skills** |
 | OAuth 2.0 (PKCE) | No | No | Yes |
-| Sprint planning | No | No | status, progress, carry-over |
+| Sprint planning | No | No | status, progress, burndown, velocity, carry-over |
 | Import/Export | No | No | CSV, JSON, Markdown |
 | Webhooks + listener | No | No | CRUD + HMAC-SHA256 listener |
 | Custom views | No | No | Full CRUD + apply |
