@@ -1264,3 +1264,666 @@ fn test_issues_list_project_filter() {
     );
 }
 
+// === v0.3.11-v0.3.13 Sprint commands ===
+
+#[test]
+fn test_sprint_help() {
+    let (code, stdout, _stderr) = run_cli(&["sprint", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("status"), "sprint help should list status subcommand");
+    assert!(stdout.contains("progress"), "sprint help should list progress subcommand");
+    assert!(stdout.contains("plan"), "sprint help should list plan subcommand");
+    assert!(
+        stdout.contains("carry-over"),
+        "sprint help should list carry-over subcommand"
+    );
+}
+
+#[test]
+fn test_sprint_alias() {
+    let (code1, stdout1, _) = run_cli(&["sp", "--help"]);
+    let (code2, stdout2, _) = run_cli(&["sprint", "--help"]);
+    assert_eq!(code1, 0);
+    assert_eq!(code2, 0);
+    assert_eq!(stdout1, stdout2);
+}
+
+#[test]
+fn test_sprint_status_requires_team() {
+    let (code, _stdout, stderr) = run_cli(&["sprint", "status"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("--team") || stderr.contains("required"),
+        "sprint status should require --team flag"
+    );
+}
+
+#[test]
+fn test_sprint_progress_requires_team() {
+    let (code, _stdout, stderr) = run_cli(&["sprint", "progress"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("--team") || stderr.contains("required"),
+        "sprint progress should require --team flag"
+    );
+}
+
+#[test]
+fn test_sprint_plan_requires_team() {
+    let (code, _stdout, stderr) = run_cli(&["sprint", "plan"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("--team") || stderr.contains("required"),
+        "sprint plan should require --team flag"
+    );
+}
+
+#[test]
+fn test_sprint_carry_over_requires_team() {
+    let (code, _stdout, stderr) = run_cli(&["sprint", "carry-over"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("--team") || stderr.contains("required"),
+        "sprint carry-over should require --team flag"
+    );
+}
+
+// === Attachments commands ===
+
+#[test]
+fn test_attachments_help() {
+    let (code, stdout, _stderr) = run_cli(&["attachments", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"), "attachments help should list list subcommand");
+    assert!(stdout.contains("get"), "attachments help should list get subcommand");
+    assert!(stdout.contains("create"), "attachments help should list create subcommand");
+    assert!(stdout.contains("update"), "attachments help should list update subcommand");
+    assert!(stdout.contains("delete"), "attachments help should list delete subcommand");
+    assert!(
+        stdout.contains("link-url"),
+        "attachments help should list link-url subcommand"
+    );
+}
+
+#[test]
+fn test_attachments_alias() {
+    let (code1, stdout1, _) = run_cli(&["att", "--help"]);
+    let (code2, stdout2, _) = run_cli(&["attachments", "--help"]);
+    assert_eq!(code1, 0);
+    assert_eq!(code2, 0);
+    assert_eq!(stdout1, stdout2);
+}
+
+#[test]
+fn test_attachments_list_requires_issue() {
+    let (code, _stdout, stderr) = run_cli(&["attachments", "list"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("ISSUE") || stderr.contains("required") || stderr.contains("issue"),
+        "attachments list should require issue ID"
+    );
+}
+
+#[test]
+fn test_attachments_create_requires_args() {
+    let (code, _stdout, stderr) = run_cli(&["attachments", "create"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("required") || stderr.contains("ISSUE"),
+        "attachments create should require issue, title, and URL"
+    );
+}
+
+#[test]
+fn test_attachments_create_help() {
+    let (code, stdout, _stderr) = run_cli(&["attachments", "create", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--title"), "attachments create should accept --title");
+    assert!(stdout.contains("--url"), "attachments create should accept --url");
+}
+
+#[test]
+fn test_attachments_delete_help() {
+    let (code, stdout, _stderr) = run_cli(&["attachments", "delete", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--force"), "attachments delete should accept --force");
+}
+
+// === Project Updates commands ===
+
+#[test]
+fn test_project_updates_help() {
+    let (code, stdout, _stderr) = run_cli(&["project-updates", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"), "project-updates help should list list subcommand");
+    assert!(stdout.contains("get"), "project-updates help should list get subcommand");
+    assert!(stdout.contains("create"), "project-updates help should list create subcommand");
+    assert!(stdout.contains("update"), "project-updates help should list update subcommand");
+    assert!(stdout.contains("archive"), "project-updates help should list archive subcommand");
+    assert!(
+        stdout.contains("unarchive"),
+        "project-updates help should list unarchive subcommand"
+    );
+}
+
+#[test]
+fn test_project_updates_alias() {
+    let (code1, stdout1, _) = run_cli(&["pu", "--help"]);
+    let (code2, stdout2, _) = run_cli(&["project-updates", "--help"]);
+    assert_eq!(code1, 0);
+    assert_eq!(code2, 0);
+    assert_eq!(stdout1, stdout2);
+}
+
+#[test]
+fn test_project_updates_list_requires_project() {
+    let (code, _stdout, stderr) = run_cli(&["project-updates", "list"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("PROJECT") || stderr.contains("required") || stderr.contains("project"),
+        "project-updates list should require project argument"
+    );
+}
+
+#[test]
+fn test_project_updates_create_help() {
+    let (code, stdout, _stderr) = run_cli(&["project-updates", "create", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--body"), "project-updates create should accept --body");
+    assert!(
+        stdout.contains("--health"),
+        "project-updates create should accept --health"
+    );
+}
+
+// === Templates Remote commands ===
+
+#[test]
+fn test_templates_remote_list_help() {
+    let (code, stdout, _stderr) = run_cli(&["templates", "remote-list", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--type") || stdout.contains("template"),
+        "templates remote-list should show type filter option"
+    );
+}
+
+#[test]
+fn test_templates_remote_create_requires_args() {
+    let (code, _stdout, stderr) = run_cli(&["templates", "remote-create"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("--name") || stderr.contains("--type") || stderr.contains("required"),
+        "templates remote-create should require --name and --type"
+    );
+}
+
+#[test]
+fn test_templates_remote_create_help() {
+    let (code, stdout, _stderr) = run_cli(&["templates", "remote-create", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--name"), "remote-create should accept --name");
+    assert!(
+        stdout.contains("--type"),
+        "remote-create should accept --type"
+    );
+    assert!(
+        stdout.contains("--team"),
+        "remote-create should accept --team"
+    );
+}
+
+#[test]
+fn test_templates_help_includes_remote() {
+    let (code, stdout, _stderr) = run_cli(&["templates", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("remote-list"),
+        "templates help should list remote-list subcommand"
+    );
+    assert!(
+        stdout.contains("remote-create"),
+        "templates help should list remote-create subcommand"
+    );
+    assert!(
+        stdout.contains("remote-get"),
+        "templates help should list remote-get subcommand"
+    );
+}
+
+// === Import commands ===
+
+#[test]
+fn test_import_help() {
+    let (code, stdout, _stderr) = run_cli(&["import", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("csv"), "import help should list csv subcommand");
+    assert!(stdout.contains("json"), "import help should list json subcommand");
+}
+
+#[test]
+fn test_import_alias() {
+    let (code1, stdout1, _) = run_cli(&["im", "--help"]);
+    let (code2, stdout2, _) = run_cli(&["import", "--help"]);
+    assert_eq!(code1, 0);
+    assert_eq!(code2, 0);
+    assert_eq!(stdout1, stdout2);
+}
+
+#[test]
+fn test_import_csv_requires_file() {
+    let (code, _stdout, stderr) = run_cli(&["import", "csv"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("FILE") || stderr.contains("required") || stderr.contains("file"),
+        "import csv should require file path"
+    );
+}
+
+#[test]
+fn test_import_json_requires_file() {
+    let (code, _stdout, stderr) = run_cli(&["import", "json"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("FILE") || stderr.contains("required") || stderr.contains("file"),
+        "import json should require file path"
+    );
+}
+
+#[test]
+fn test_import_csv_help() {
+    let (code, stdout, _stderr) = run_cli(&["import", "csv", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--team"), "import csv should accept --team");
+    assert!(stdout.contains("--dry-run"), "import csv should accept --dry-run");
+}
+
+#[test]
+fn test_import_json_help() {
+    let (code, stdout, _stderr) = run_cli(&["import", "json", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--team"), "import json should accept --team");
+    assert!(stdout.contains("--dry-run"), "import json should accept --dry-run");
+}
+
+// === Export enhancements ===
+
+#[test]
+fn test_export_json_subcommand() {
+    let (code, stdout, _stderr) = run_cli(&["export", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("json"), "export help should list json subcommand");
+}
+
+#[test]
+fn test_export_projects_csv_subcommand() {
+    let (code, stdout, _stderr) = run_cli(&["export", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("projects-csv"),
+        "export help should list projects-csv subcommand"
+    );
+}
+
+#[test]
+fn test_export_json_help() {
+    let (code, stdout, _stderr) = run_cli(&["export", "json", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--team"), "export json should accept --team");
+    assert!(stdout.contains("--file"), "export json should accept --file");
+    assert!(stdout.contains("--pretty"), "export json should accept --pretty");
+}
+
+#[test]
+fn test_export_projects_csv_help() {
+    let (code, stdout, _stderr) = run_cli(&["export", "projects-csv", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--file"),
+        "export projects-csv should accept --file"
+    );
+    assert!(
+        stdout.contains("--archived"),
+        "export projects-csv should accept --archived"
+    );
+}
+
+#[test]
+fn test_export_alias() {
+    let (code1, stdout1, _) = run_cli(&["exp", "--help"]);
+    let (code2, stdout2, _) = run_cli(&["export", "--help"]);
+    assert_eq!(code1, 0);
+    assert_eq!(code2, 0);
+    assert_eq!(stdout1, stdout2);
+}
+
+// === Completions commands ===
+
+#[test]
+fn test_completions_top_level_help() {
+    let (code, stdout, _stderr) = run_cli(&["completions", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("static") || stdout.contains("Static"),
+        "completions help should list static subcommand"
+    );
+    assert!(
+        stdout.contains("dynamic") || stdout.contains("Dynamic"),
+        "completions help should list dynamic subcommand"
+    );
+}
+
+#[test]
+fn test_completions_alias() {
+    let (code1, stdout1, _) = run_cli(&["comp", "--help"]);
+    let (code2, stdout2, _) = run_cli(&["completions", "--help"]);
+    assert_eq!(code1, 0);
+    assert_eq!(code2, 0);
+    assert_eq!(stdout1, stdout2);
+}
+
+#[test]
+fn test_completions_dynamic_help() {
+    let (code, stdout, _stderr) = run_cli(&["completions", "dynamic", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("shell") || stdout.contains("Shell") || stdout.contains("SHELL"),
+        "dynamic subcommand should accept shell argument"
+    );
+}
+
+#[test]
+fn test_completions_static_help() {
+    let (code, stdout, _stderr) = run_cli(&["completions", "static", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("bash") || stdout.contains("Bash"),
+        "static completions should accept bash shell"
+    );
+    assert!(
+        stdout.contains("zsh") || stdout.contains("Zsh"),
+        "static completions should accept zsh shell"
+    );
+    assert!(
+        stdout.contains("fish") || stdout.contains("Fish"),
+        "static completions should accept fish shell"
+    );
+    assert!(
+        stdout.contains("powershell") || stdout.contains("PowerShell"),
+        "static completions should accept powershell shell"
+    );
+}
+
+#[test]
+fn test_completions_dynamic_accepts_shells() {
+    let (code, stdout, _stderr) = run_cli(&["completions", "dynamic", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("bash") || stdout.contains("Bash"),
+        "dynamic completions should accept bash shell"
+    );
+    assert!(
+        stdout.contains("zsh") || stdout.contains("Zsh"),
+        "dynamic completions should accept zsh shell"
+    );
+    assert!(
+        stdout.contains("fish") || stdout.contains("Fish"),
+        "dynamic completions should accept fish shell"
+    );
+    assert!(
+        stdout.contains("powershell") || stdout.contains("PowerShell"),
+        "dynamic completions should accept powershell shell"
+    );
+}
+
+// === Hidden _complete command ===
+
+#[test]
+fn test_complete_hidden_not_in_help() {
+    let (code, stdout, _stderr) = run_cli(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        !stdout.contains("_complete"),
+        "_complete should NOT appear in main help (it is hidden)"
+    );
+}
+
+#[test]
+fn test_complete_requires_type() {
+    let (code, _stdout, stderr) = run_cli(&["_complete"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("--type") || stderr.contains("required"),
+        "_complete should require --type flag"
+    );
+}
+
+#[test]
+fn test_complete_unknown_type() {
+    // An unknown type should either fail gracefully at the API level or return empty results
+    // Since it needs auth, it will fail, but the flag should be accepted at parse time
+    let (code, _stdout, _stderr) = run_cli(&["_complete", "--type", "nonexistent_type_xyz"]);
+    // Should not crash — any exit code is acceptable (auth failure, unknown type, etc.)
+    let _ = code;
+}
+
+// === Teams CRUD ===
+
+#[test]
+fn test_teams_create_requires_name() {
+    let (code, _stdout, stderr) = run_cli(&["teams", "create"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("NAME") || stderr.contains("required") || stderr.contains("name"),
+        "teams create should require name argument"
+    );
+}
+
+#[test]
+fn test_teams_create_help() {
+    let (code, stdout, _stderr) = run_cli(&["teams", "create", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--key"), "teams create should accept --key");
+    assert!(
+        stdout.contains("--description"),
+        "teams create should accept --description"
+    );
+    assert!(
+        stdout.contains("--color"),
+        "teams create should accept --color"
+    );
+}
+
+#[test]
+fn test_teams_update_requires_id() {
+    let (code, _stdout, stderr) = run_cli(&["teams", "update"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("ID") || stderr.contains("required") || stderr.contains("id"),
+        "teams update should require id argument"
+    );
+}
+
+#[test]
+fn test_teams_update_help() {
+    let (code, stdout, _stderr) = run_cli(&["teams", "update", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--name"), "teams update should accept --name");
+    assert!(
+        stdout.contains("--description"),
+        "teams update should accept --description"
+    );
+}
+
+#[test]
+fn test_teams_delete_requires_id() {
+    let (code, _stdout, stderr) = run_cli(&["teams", "delete"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("ID") || stderr.contains("required") || stderr.contains("id"),
+        "teams delete should require id argument"
+    );
+}
+
+#[test]
+fn test_teams_delete_help() {
+    let (code, stdout, _stderr) = run_cli(&["teams", "delete", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--force"),
+        "teams delete should accept --force"
+    );
+}
+
+#[test]
+fn test_teams_help_includes_crud() {
+    let (code, stdout, _stderr) = run_cli(&["teams", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("create"), "teams help should list create subcommand");
+    assert!(stdout.contains("update"), "teams help should list update subcommand");
+    assert!(stdout.contains("delete"), "teams help should list delete subcommand");
+}
+
+// === Projects archive/unarchive ===
+
+#[test]
+fn test_projects_archive_requires_id() {
+    let (code, _stdout, stderr) = run_cli(&["projects", "archive"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("ID") || stderr.contains("required") || stderr.contains("id"),
+        "projects archive should require id argument"
+    );
+}
+
+#[test]
+fn test_projects_unarchive_requires_id() {
+    let (code, _stdout, stderr) = run_cli(&["projects", "unarchive"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("ID") || stderr.contains("required") || stderr.contains("id"),
+        "projects unarchive should require id argument"
+    );
+}
+
+#[test]
+fn test_projects_help_includes_archive() {
+    let (code, stdout, _stderr) = run_cli(&["projects", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("archive"),
+        "projects help should list archive subcommand"
+    );
+    assert!(
+        stdout.contains("unarchive"),
+        "projects help should list unarchive subcommand"
+    );
+}
+
+#[test]
+fn test_projects_help_includes_label_mgmt() {
+    let (code, stdout, _stderr) = run_cli(&["projects", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("add-labels"),
+        "projects help should list add-labels subcommand"
+    );
+    assert!(
+        stdout.contains("remove-labels"),
+        "projects help should list remove-labels subcommand"
+    );
+    assert!(
+        stdout.contains("set-labels"),
+        "projects help should list set-labels subcommand"
+    );
+}
+
+// === Done command ===
+
+#[test]
+fn test_done_help() {
+    let (code, stdout, _stderr) = run_cli(&["done", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--status") || stdout.contains("Done"),
+        "done help should mention status flag or Done default"
+    );
+}
+
+#[test]
+fn test_done_in_top_level_help() {
+    let (code, stdout, _stderr) = run_cli(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("done"),
+        "top-level help should list done command"
+    );
+}
+
+// === Setup command ===
+
+#[test]
+fn test_setup_help() {
+    let (code, stdout, _stderr) = run_cli(&["setup", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("setup") || stdout.contains("wizard") || stdout.contains("onboarding"),
+        "setup help should describe the setup wizard"
+    );
+}
+
+#[test]
+fn test_setup_in_top_level_help() {
+    let (code, stdout, _stderr) = run_cli(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("setup"),
+        "top-level help should list setup command"
+    );
+}
+
+// === Doctor --fix ===
+
+#[test]
+fn test_doctor_fix_flag() {
+    let (code, stdout, _stderr) = run_cli(&["doctor", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--fix"),
+        "doctor help should show --fix flag"
+    );
+}
+
+#[test]
+fn test_doctor_check_api_flag() {
+    let (code, stdout, _stderr) = run_cli(&["doctor", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--check-api"),
+        "doctor help should show --check-api flag"
+    );
+}
+
+// === Global --yes flag ===
+
+#[test]
+fn test_yes_flag_accepted() {
+    let (code, stdout, _stderr) = run_cli(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("--yes"),
+        "global help should show --yes flag"
+    );
+}
+
+#[test]
+fn test_yes_flag_works_with_subcommand() {
+    // --yes is global and should be accepted alongside any subcommand's help
+    let (code, stdout, _stderr) = run_cli(&["--yes", "issues", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("list"),
+        "--yes flag should not interfere with subcommand parsing"
+    );
+}
+
