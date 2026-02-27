@@ -30,6 +30,60 @@ pub enum TeamCommands {
         /// Team key, name, or ID (e.g., "ENG")
         team: String,
     },
+    /// Create a new team
+    Create {
+        /// Team name (required)
+        name: String,
+        /// Team key (2-5 uppercase letters)
+        #[arg(short, long)]
+        key: Option<String>,
+        /// Team description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Team icon
+        #[arg(long)]
+        icon: Option<String>,
+        /// Team color (hex)
+        #[arg(long)]
+        color: Option<String>,
+        /// Make team private
+        #[arg(long)]
+        private: bool,
+        /// Team timezone
+        #[arg(long)]
+        timezone: Option<String>,
+    },
+    /// Update an existing team
+    Update {
+        /// Team ID, key, or name
+        id: String,
+        /// New name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// New description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// New icon
+        #[arg(long)]
+        icon: Option<String>,
+        /// New color (hex)
+        #[arg(long)]
+        color: Option<String>,
+        /// Make private
+        #[arg(long)]
+        private: Option<bool>,
+        /// Set timezone
+        #[arg(long)]
+        timezone: Option<String>,
+    },
+    /// Delete a team
+    Delete {
+        /// Team ID, key, or name
+        id: String,
+        /// Skip confirmation
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Tabled)]
@@ -53,6 +107,25 @@ pub async fn handle(cmd: TeamCommands, output: &OutputOptions) -> Result<()> {
             get_teams(&final_ids, output).await
         }
         TeamCommands::Members { team } => list_members(&team, output).await,
+        TeamCommands::Create {
+            name,
+            key,
+            description,
+            icon,
+            color,
+            private,
+            timezone,
+        } => create_team(&name, key, description, icon, color, private, timezone, output).await,
+        TeamCommands::Update {
+            id,
+            name,
+            description,
+            icon,
+            color,
+            private,
+            timezone,
+        } => update_team(&id, name, description, icon, color, private, timezone, output).await,
+        TeamCommands::Delete { id, force } => delete_team(&id, force, output).await,
     }
 }
 
@@ -410,6 +483,174 @@ async fn list_members(team: &str, output: &OutputOptions) -> Result<()> {
     println!("Team: {}\n", team_name.bold());
     println!("{}", table);
     println!("\n{} members", members.len());
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_team(
+    name: &str,
+    key: Option<String>,
+    description: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    private: bool,
+    timezone: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let mut input = json!({ "name": name });
+    if let Some(k) = &key {
+        input["key"] = json!(k);
+    }
+    if let Some(d) = &description {
+        input["description"] = json!(d);
+    }
+    if let Some(i) = &icon {
+        input["icon"] = json!(i);
+    }
+    if let Some(c) = &color {
+        input["color"] = json!(c);
+    }
+    if private {
+        input["private"] = json!(true);
+    }
+    if let Some(tz) = &timezone {
+        input["timezone"] = json!(tz);
+    }
+
+    let mutation = r#"
+        mutation($input: TeamCreateInput!) {
+            teamCreate(input: $input) {
+                success
+                team { id name key }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
+
+    if result["data"]["teamCreate"]["success"].as_bool() == Some(true) {
+        let team = &result["data"]["teamCreate"]["team"];
+        if output.is_json() || output.has_template() {
+            print_json(team, output)?;
+            return Ok(());
+        }
+        let display_name = team["name"].as_str().unwrap_or(name);
+        let display_key = team["key"].as_str().unwrap_or("");
+        println!("{} Created team: {} ({})", "+".green(), display_name, display_key);
+        println!("  ID: {}", team["id"].as_str().unwrap_or(""));
+    } else {
+        anyhow::bail!("Failed to create team");
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn update_team(
+    id: &str,
+    name: Option<String>,
+    description: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    private: Option<bool>,
+    timezone: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let resolved_id = resolve_team_id(&client, id, &output.cache).await?;
+
+    let mut input = json!({});
+    if let Some(n) = name {
+        input["name"] = json!(n);
+    }
+    if let Some(d) = description {
+        input["description"] = json!(d);
+    }
+    if let Some(i) = icon {
+        input["icon"] = json!(i);
+    }
+    if let Some(c) = color {
+        input["color"] = json!(c);
+    }
+    if let Some(p) = private {
+        input["private"] = json!(p);
+    }
+    if let Some(tz) = timezone {
+        input["timezone"] = json!(tz);
+    }
+
+    if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        println!("No updates specified.");
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!, $input: TeamUpdateInput!) {
+            teamUpdate(id: $id, input: $input) {
+                success
+                team { id name key }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": resolved_id, "input": input })))
+        .await?;
+
+    if result["data"]["teamUpdate"]["success"].as_bool() == Some(true) {
+        let team = &result["data"]["teamUpdate"]["team"];
+        if output.is_json() || output.has_template() {
+            print_json(team, output)?;
+            return Ok(());
+        }
+        println!("{} Team updated", "+".green());
+        println!("  ID: {}", team["id"].as_str().unwrap_or(""));
+        println!("  Name: {}", team["name"].as_str().unwrap_or(""));
+        println!("  Key: {}", team["key"].as_str().unwrap_or(""));
+    } else {
+        anyhow::bail!("Failed to update team");
+    }
+
+    Ok(())
+}
+
+async fn delete_team(id: &str, force: bool, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let resolved_id = resolve_team_id(&client, id, &output.cache).await?;
+
+    if !force && !crate::is_yes() {
+        anyhow::bail!(
+            "Delete requires --force flag. Use: linear teams delete {} --force",
+            id
+        );
+    }
+
+    let mutation = r#"
+        mutation($id: String!) {
+            teamDelete(id: $id) {
+                success
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": resolved_id })))
+        .await?;
+
+    let success = result["data"]["teamDelete"]["success"]
+        .as_bool()
+        .unwrap_or(false);
+
+    if success {
+        println!("Team {} deleted.", id);
+    } else {
+        anyhow::bail!("Failed to delete team {}", id);
+    }
 
     Ok(())
 }
