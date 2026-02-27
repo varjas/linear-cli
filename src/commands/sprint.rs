@@ -3,6 +3,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use futures::stream::{self, StreamExt};
 use serde_json::json;
+use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::output::{print_json, print_json_owned, OutputOptions};
@@ -36,6 +37,27 @@ pub enum SprintCommands {
         #[arg(short, long)]
         force: bool,
     },
+    /// Show ASCII burndown chart for current sprint
+    Burndown {
+        /// Team key, name, or ID
+        #[arg(short, long)]
+        team: String,
+        /// Chart width in characters (default: 60)
+        #[arg(long, default_value = "60")]
+        width: usize,
+        /// Chart height in lines (default: 15)
+        #[arg(long, default_value = "15")]
+        height: usize,
+    },
+    /// Show sprint velocity across recent cycles
+    Velocity {
+        /// Team key, name, or ID
+        #[arg(short, long)]
+        team: String,
+        /// Number of past cycles to analyze (default: 6)
+        #[arg(short = 'n', long, default_value = "6")]
+        count: usize,
+    },
 }
 
 pub async fn handle(cmd: SprintCommands, output: &OutputOptions) -> Result<()> {
@@ -44,6 +66,8 @@ pub async fn handle(cmd: SprintCommands, output: &OutputOptions) -> Result<()> {
         SprintCommands::Progress { team } => sprint_progress(&team, output).await,
         SprintCommands::Plan { team } => sprint_plan(&team, output).await,
         SprintCommands::CarryOver { team, force } => sprint_carry_over(&team, force, output).await,
+        SprintCommands::Burndown { team, width, height } => burndown(&team, width, height, output).await,
+        SprintCommands::Velocity { team, count } => velocity(&team, count, output).await,
     }
 }
 
@@ -635,4 +659,552 @@ async fn sprint_carry_over(team: &str, force: bool, output: &OutputOptions) -> R
     }
 
     Ok(())
+}
+
+async fn burndown(team: &str, width: usize, height: usize, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let team_id = resolve_team_id(&client, team, &output.cache).await?;
+
+    let query = r#"
+        query($teamId: String!) {
+            team(id: $teamId) {
+                name
+                activeCycle {
+                    id name number
+                    startsAt endsAt
+                    scopeHistory
+                    completedScopeHistory
+                    issueCountHistory
+                    completedIssueCountHistory
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .query(query, Some(json!({ "teamId": team_id })))
+        .await?;
+    let team_data = &result["data"]["team"];
+
+    if team_data.is_null() {
+        anyhow::bail!("Team not found: {}", team);
+    }
+
+    let team_name = team_data["name"].as_str().unwrap_or(team);
+    let cycle = &team_data["activeCycle"];
+
+    if cycle.is_null() {
+        if output.is_json() || output.has_template() {
+            print_json_owned(
+                json!({ "team": team_name, "activeCycle": null }),
+                output,
+            )?;
+        } else {
+            println!("No active cycle for team '{}'.", team_name);
+        }
+        return Ok(());
+    }
+
+    // Extract history arrays
+    let scope_history: Vec<f64> = cycle["scopeHistory"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
+        .unwrap_or_default();
+    let completed_scope_history: Vec<f64> = cycle["completedScopeHistory"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
+        .unwrap_or_default();
+    let issue_count_history: Vec<f64> = cycle["issueCountHistory"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
+        .unwrap_or_default();
+    let completed_issue_count_history: Vec<f64> = cycle["completedIssueCountHistory"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
+        .unwrap_or_default();
+
+    let cycle_number = cycle["number"].as_u64().unwrap_or(0);
+    let start_date = cycle["startsAt"]
+        .as_str()
+        .map(|s| s.get(..10).unwrap_or(s))
+        .unwrap_or("-");
+    let end_date = cycle["endsAt"]
+        .as_str()
+        .map(|s| s.get(..10).unwrap_or(s))
+        .unwrap_or("-");
+
+    // JSON output: return raw history data
+    if output.is_json() || output.has_template() {
+        print_json_owned(
+            json!({
+                "cycle_number": cycle_number,
+                "startsAt": start_date,
+                "endsAt": end_date,
+                "scopeHistory": scope_history,
+                "completedScopeHistory": completed_scope_history,
+                "issueCountHistory": issue_count_history,
+                "completedIssueCountHistory": completed_issue_count_history,
+            }),
+            output,
+        )?;
+        return Ok(());
+    }
+
+    // Prefer scope (points) history; fall back to issue count history
+    let (scope, completed, label) = if !scope_history.is_empty() && !completed_scope_history.is_empty() {
+        (&scope_history, &completed_scope_history, "points")
+    } else if !issue_count_history.is_empty() && !completed_issue_count_history.is_empty() {
+        (&issue_count_history, &completed_issue_count_history, "issues")
+    } else {
+        println!("No burndown data available yet.");
+        return Ok(());
+    };
+
+    // Use the shorter length if they differ
+    let len = scope.len().min(completed.len());
+    if len == 0 {
+        println!("No burndown data available yet.");
+        return Ok(());
+    }
+
+    // Compute remaining work per day
+    let remaining: Vec<f64> = (0..len)
+        .map(|i| (scope[i] - completed[i]).max(0.0))
+        .collect();
+
+    // Compute ideal burndown: linear from initial scope down to 0
+    let initial_scope = scope[0];
+    let total_days = len.max(1) as f64;
+    let ideal: Vec<f64> = (0..len)
+        .map(|i| {
+            let progress = i as f64 / (total_days - 1.0).max(1.0);
+            (initial_scope * (1.0 - progress)).max(0.0)
+        })
+        .collect();
+
+    let initial_scope_display = initial_scope as u64;
+    let title = format!(
+        "Sprint {} Burndown ({} {} | {} to {})",
+        cycle_number, initial_scope_display, label, start_date, end_date
+    );
+
+    let chart = render_burndown(&remaining, &ideal, width, height, &title);
+    println!("{}", chart);
+
+    Ok(())
+}
+
+fn render_burndown(
+    remaining: &[f64],
+    ideal: &[f64],
+    width: usize,
+    height: usize,
+    title: &str,
+) -> String {
+    let height = height.max(3);
+    let data_len = remaining.len();
+    let chart_width = width.min(data_len);
+
+    let max_val = remaining
+        .iter()
+        .chain(ideal.iter())
+        .cloned()
+        .fold(0.0f64, f64::max)
+        .max(1.0);
+
+    let mut lines = Vec::new();
+    lines.push(format!("{}", title.bold()));
+    lines.push(String::new());
+
+    // Determine y-axis label width
+    let y_label_width = format!("{:.0}", max_val).len().max(4);
+
+    // For each row (top to bottom)
+    for row in (0..height).rev() {
+        let y_val = max_val * row as f64 / (height - 1) as f64;
+        let label = format!("{:>width$.0}", y_val, width = y_label_width);
+        let mut line = format!("{} \u{2502}", label);
+
+        for col in 0..chart_width {
+            // Map column to data index (scale if chart_width < data_len)
+            let data_idx = if chart_width > 1 {
+                col * (data_len - 1) / (chart_width - 1)
+            } else {
+                0
+            };
+
+            let remaining_y = remaining[data_idx];
+            let ideal_y = ideal[data_idx];
+
+            // Map values to row positions
+            let remaining_row = if max_val > 0.0 {
+                (remaining_y / max_val * (height - 1) as f64).round() as usize
+            } else {
+                0
+            };
+            let ideal_row = if max_val > 0.0 {
+                (ideal_y / max_val * (height - 1) as f64).round() as usize
+            } else {
+                0
+            };
+
+            if remaining_row == row {
+                // Color actual line: yellow if above ideal, green if at/below
+                let ch = if remaining_y > ideal_y + 0.01 {
+                    format!("{}", "\u{25cf}".yellow())
+                } else {
+                    format!("{}", "\u{25cf}".green())
+                };
+                line.push_str(&ch);
+            } else if ideal_row == row {
+                line.push_str(&format!("{}", "\u{2500}".dimmed()));
+            } else {
+                line.push(' ');
+            }
+        }
+
+        lines.push(line);
+    }
+
+    // X-axis border
+    let x_border = format!(
+        "{} \u{2514}{}",
+        " ".repeat(y_label_width),
+        "\u{2500}".repeat(chart_width)
+    );
+    lines.push(x_border);
+
+    // Day labels
+    if chart_width >= 10 {
+        let day_end = format!("Day {}", data_len);
+        let padding = chart_width.saturating_sub(5 + day_end.len());
+        let day_line = format!(
+            "{} Day 1{}{}",
+            " ".repeat(y_label_width + 1),
+            " ".repeat(padding),
+            day_end
+        );
+        lines.push(day_line);
+    } else {
+        let day_line = format!(
+            "{} Day 1 .. Day {}",
+            " ".repeat(y_label_width + 1),
+            data_len
+        );
+        lines.push(day_line);
+    }
+
+    // Legend
+    lines.push(String::new());
+    lines.push(format!(
+        "  {} Actual remaining   {} Ideal burndown",
+        "\u{25cf}".yellow(),
+        "\u{2500}".dimmed()
+    ));
+
+    lines.join("\n")
+}
+
+#[derive(Tabled)]
+struct VelocityRow {
+    #[tabled(rename = "Sprint")]
+    sprint: String,
+    #[tabled(rename = "Issues")]
+    issues: String,
+    #[tabled(rename = "Points")]
+    points: String,
+    #[tabled(rename = "Done %")]
+    done_pct: String,
+    #[tabled(rename = "Duration")]
+    duration: String,
+}
+
+async fn velocity(team: &str, count: usize, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let team_id = resolve_team_id(&client, team, &output.cache).await?;
+
+    let query = r#"
+        query($teamId: String!, $first: Int) {
+            team(id: $teamId) {
+                name
+                cycles(first: $first, orderBy: startsAt, filter: { isPast: { eq: true } }) {
+                    nodes {
+                        id name number
+                        startsAt endsAt completedAt
+                        issueCountHistory
+                        completedIssueCountHistory
+                        scopeHistory
+                        completedScopeHistory
+                        progress
+                    }
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .query(
+            query,
+            Some(json!({ "teamId": team_id, "first": count as i64 })),
+        )
+        .await?;
+    let team_data = &result["data"]["team"];
+
+    if team_data.is_null() {
+        anyhow::bail!("Team not found: {}", team);
+    }
+
+    let team_name = team_data["name"].as_str().unwrap_or(team);
+    let cycles = team_data["cycles"]["nodes"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    if cycles.is_empty() {
+        if output.is_json() || output.has_template() {
+            print_json_owned(
+                json!({ "team": team_name, "cycles": [], "average_points": null, "trend": null }),
+                output,
+            )?;
+        } else {
+            println!("No past cycles for team '{}'.", team_name);
+        }
+        return Ok(());
+    }
+
+    // Extract per-cycle stats
+    struct CycleStats {
+        name: String,
+        number: u64,
+        issues_completed: u64,
+        issues_total: u64,
+        points_completed: u64,
+        points_total: u64,
+        progress: f64,
+        duration_days: u64,
+    }
+
+    let stats: Vec<CycleStats> = cycles
+        .iter()
+        .map(|c| {
+            let name = c["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("(unnamed)")
+                .to_string();
+            let number = c["number"].as_u64().unwrap_or(0);
+
+            let issues_completed = c["completedIssueCountHistory"]
+                .as_array()
+                .and_then(|a| a.last())
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as u64;
+            let issues_total = c["issueCountHistory"]
+                .as_array()
+                .and_then(|a| a.last())
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as u64;
+            let points_completed = c["completedScopeHistory"]
+                .as_array()
+                .and_then(|a| a.last())
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as u64;
+            let points_total = c["scopeHistory"]
+                .as_array()
+                .and_then(|a| a.last())
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as u64;
+            let progress = c["progress"].as_f64().unwrap_or(0.0);
+
+            let duration_days = match (c["startsAt"].as_str(), c["endsAt"].as_str()) {
+                (Some(start), Some(end)) => {
+                    let start_date = start.get(..10).unwrap_or(start);
+                    let end_date = end.get(..10).unwrap_or(end);
+                    // Parse YYYY-MM-DD manually
+                    parse_duration_days(start_date, end_date).unwrap_or(14)
+                }
+                _ => 14,
+            };
+
+            CycleStats {
+                name,
+                number,
+                issues_completed,
+                issues_total,
+                points_completed,
+                points_total,
+                progress,
+                duration_days,
+            }
+        })
+        .collect();
+
+    // JSON output
+    if output.is_json() || output.has_template() {
+        let points_vals: Vec<u64> = stats.iter().map(|s| s.points_completed).collect();
+        let avg = if points_vals.is_empty() {
+            0.0
+        } else {
+            points_vals.iter().sum::<u64>() as f64 / points_vals.len() as f64
+        };
+        let trend = compute_trend(&points_vals);
+
+        let cycles_json: Vec<serde_json::Value> = stats
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "number": s.number,
+                    "issues_completed": s.issues_completed,
+                    "issues_total": s.issues_total,
+                    "points_completed": s.points_completed,
+                    "points_total": s.points_total,
+                    "progress": s.progress,
+                    "duration_days": s.duration_days,
+                })
+            })
+            .collect();
+
+        print_json_owned(
+            json!({
+                "team": team_name,
+                "cycles": cycles_json,
+                "average_points": avg,
+                "trend": trend,
+            }),
+            output,
+        )?;
+        return Ok(());
+    }
+
+    // Table output
+    println!(
+        "{}",
+        format!("Sprint Velocity - {}", team_name).bold()
+    );
+    println!("{}", "-".repeat(50));
+
+    let rows: Vec<VelocityRow> = stats
+        .iter()
+        .map(|s| {
+            let pct = s.progress * 100.0;
+            let done_str = format!("{:.0}%", pct);
+            let colored_done = if pct >= 100.0 {
+                done_str.green().to_string()
+            } else if pct >= 80.0 {
+                done_str.cyan().to_string()
+            } else if pct >= 50.0 {
+                done_str.yellow().to_string()
+            } else {
+                done_str.red().to_string()
+            };
+
+            VelocityRow {
+                sprint: format!("#{} {}", s.number, s.name),
+                issues: format!("{}/{}", s.issues_completed, s.issues_total),
+                points: format!("{}/{}", s.points_completed, s.points_total),
+                done_pct: colored_done,
+                duration: format!("{} days", s.duration_days),
+            }
+        })
+        .collect();
+
+    let table = Table::new(&rows).to_string();
+    println!("{}", table);
+
+    // ASCII bar chart
+    let max_points = stats
+        .iter()
+        .map(|s| s.points_completed)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+
+    println!();
+    println!("{}", "Points Completed per Sprint".bold());
+    for s in &stats {
+        let bar_len = (s.points_completed as f64 / max_points as f64 * 30.0).round() as usize;
+        let bar = "\u{2588}".repeat(bar_len);
+        println!(
+            "  #{:<3} {} {}",
+            s.number,
+            bar.green(),
+            s.points_completed
+        );
+    }
+
+    // Summary stats
+    let points_vals: Vec<u64> = stats.iter().map(|s| s.points_completed).collect();
+    let avg = if points_vals.is_empty() {
+        0.0
+    } else {
+        points_vals.iter().sum::<u64>() as f64 / points_vals.len() as f64
+    };
+
+    println!();
+    println!("{}", "Summary".bold());
+    println!("  Average: {:.1} points/sprint", avg);
+
+    if points_vals.len() >= 2 {
+        let trend = compute_trend(&points_vals);
+        let trend_display = match trend {
+            "improving" => format!("{} improving", "\u{2191}").green().to_string(),
+            "declining" => format!("{} declining", "\u{2193}").red().to_string(),
+            _ => format!("{} stable", "\u{2192}").yellow().to_string(),
+        };
+        println!("  Trend:   {}", trend_display);
+    }
+
+    Ok(())
+}
+
+fn compute_trend(values: &[u64]) -> &'static str {
+    if values.len() < 2 {
+        return "stable";
+    }
+    let mid = values.len() / 2;
+    let first_half = &values[..mid];
+    let second_half = &values[mid..];
+
+    let first_avg = if first_half.is_empty() {
+        0.0
+    } else {
+        first_half.iter().sum::<u64>() as f64 / first_half.len() as f64
+    };
+    let second_avg = if second_half.is_empty() {
+        0.0
+    } else {
+        second_half.iter().sum::<u64>() as f64 / second_half.len() as f64
+    };
+
+    let threshold = first_avg * 0.1; // 10% change threshold
+    if second_avg > first_avg + threshold {
+        "improving"
+    } else if second_avg < first_avg - threshold {
+        "declining"
+    } else {
+        "stable"
+    }
+}
+
+fn parse_duration_days(start: &str, end: &str) -> Option<u64> {
+    // Parse YYYY-MM-DD
+    let parse = |s: &str| -> Option<(i64, i64, i64)> {
+        let parts: Vec<&str> = s.split('-').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let y = parts[0].parse::<i64>().ok()?;
+        let m = parts[1].parse::<i64>().ok()?;
+        let d = parts[2].parse::<i64>().ok()?;
+        Some((y, m, d))
+    };
+
+    let (sy, sm, sd) = parse(start)?;
+    let (ey, em, ed) = parse(end)?;
+
+    // Convert to approximate days using a simple calculation
+    let start_days = sy * 365 + sm * 30 + sd;
+    let end_days = ey * 365 + em * 30 + ed;
+    Some((end_days - start_days).unsigned_abs())
 }
