@@ -437,7 +437,7 @@ mod tests {
             data: serde_json::json!({}),
         };
         let age = entry.age_seconds();
-        assert!(age >= 60 && age <= 62); // Allow small drift
+        assert!((60..=62).contains(&age)); // Allow small drift
     }
 
     #[test]

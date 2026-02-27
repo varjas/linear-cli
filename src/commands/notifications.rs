@@ -464,6 +464,64 @@ async fn archive_all_notifications() -> Result<()> {
     Ok(())
 }
 
+async fn show_count(output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let query = r#"
+        query($first: Int, $after: String) {
+            notifications(first: $first, after: $after) {
+                nodes {
+                    id
+                    readAt
+                }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
+            }
+        }
+    "#;
+
+    let pagination = PaginationOptions {
+        all: true,
+        ..Default::default()
+    };
+
+    let notifications = paginate_nodes(
+        &client,
+        query,
+        serde_json::Map::new(),
+        &["data", "notifications", "nodes"],
+        &["data", "notifications", "pageInfo"],
+        &pagination,
+        100,
+    )
+    .await?;
+
+    let unread_count = notifications
+        .iter()
+        .filter(|n| n["readAt"].is_null())
+        .count();
+
+    if output.is_json() || output.has_template() {
+        print_json_owned(json!({ "count": unread_count }), output)?;
+        return Ok(());
+    }
+
+    if unread_count == 0 {
+        println!("{} No unread notifications", "+".green());
+    } else {
+        println!(
+            "{} {} unread notification{}",
+            "!".yellow().bold(),
+            unread_count.to_string().cyan().bold(),
+            if unread_count == 1 { "" } else { "s" }
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,62 +591,4 @@ mod tests {
         let result = format_notification_type("");
         assert_eq!(result, "");
     }
-}
-
-async fn show_count(output: &OutputOptions) -> Result<()> {
-    let client = LinearClient::new()?;
-
-    let query = r#"
-        query($first: Int, $after: String) {
-            notifications(first: $first, after: $after) {
-                nodes {
-                    id
-                    readAt
-                }
-                pageInfo {
-                    hasNextPage
-                    endCursor
-                }
-            }
-        }
-    "#;
-
-    let pagination = PaginationOptions {
-        all: true,
-        ..Default::default()
-    };
-
-    let notifications = paginate_nodes(
-        &client,
-        query,
-        serde_json::Map::new(),
-        &["data", "notifications", "nodes"],
-        &["data", "notifications", "pageInfo"],
-        &pagination,
-        100,
-    )
-    .await?;
-
-    let unread_count = notifications
-        .iter()
-        .filter(|n| n["readAt"].is_null())
-        .count();
-
-    if output.is_json() || output.has_template() {
-        print_json_owned(json!({ "count": unread_count }), output)?;
-        return Ok(());
-    }
-
-    if unread_count == 0 {
-        println!("{} No unread notifications", "+".green());
-    } else {
-        println!(
-            "{} {} unread notification{}",
-            "!".yellow().bold(),
-            unread_count.to_string().cyan().bold(),
-            if unread_count == 1 { "" } else { "s" }
-        );
-    }
-
-    Ok(())
 }

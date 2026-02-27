@@ -452,8 +452,10 @@ mod tests {
 
     #[test]
     fn test_config_serialize_deserialize() {
-        let mut config = Config::default();
-        config.current = Some("prod".to_string());
+        let mut config = Config {
+            current: Some("prod".to_string()),
+            ..Default::default()
+        };
         config.workspaces.insert(
             "prod".to_string(),
             Workspace {
@@ -604,8 +606,10 @@ mod tests {
 
     #[test]
     fn test_oauth_config_roundtrip_toml() {
-        let mut config = Config::default();
-        config.current = Some("oauth-test".to_string());
+        let mut config = Config {
+            current: Some("oauth-test".to_string()),
+            ..Default::default()
+        };
         config.workspaces.insert(
             "oauth-test".to_string(),
             Workspace {
@@ -636,8 +640,10 @@ mod tests {
 
     #[test]
     fn test_oauth_not_serialized_when_none() {
-        let mut config = Config::default();
-        config.current = Some("default".to_string());
+        let mut config = Config {
+            current: Some("default".to_string()),
+            ..Default::default()
+        };
         config.workspaces.insert(
             "default".to_string(),
             Workspace {
