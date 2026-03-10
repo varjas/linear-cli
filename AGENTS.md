@@ -44,3 +44,11 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 - `linear-cli agent` prints agent-focused capabilities and examples
 - JSON samples live in `docs/json/`
 - Use `--help` on any command for full options
+
+## Failure Modes
+
+### Pager leaves terminal in a bad state after a successful command
+
+| symptom | evidence | root cause | wrong instinct | corrected default behavior | where the lesson belongs next |
+| --- | --- | --- | --- | --- | --- |
+| On macOS, a successful table-output command can leave the shell acting raw-ish until `reset` or `stty sane`. | `stty -a` after the command may show `pendin`; piping through an external pager can avoid the symptom. | Auto-pager cleanup depended on a guard `Drop`, but `async_main` called `std::process::exit`, which skips destructors entirely. The pager path also redirected stdout with `dup2` without restoring the original fd on teardown. | Tweaking `LESS`, `PAGER`, or termios flags first. | When touching pager code, preserve a saved stdout fd, restore it before pager shutdown, and return an exit code to `main` instead of calling `std::process::exit` while cleanup guards are still in scope. | Keep this note in `AGENTS.md` and add/keep a Unix regression test around stdout redirection in `src/main.rs`. |

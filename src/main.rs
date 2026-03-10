@@ -6,9 +6,9 @@ mod dates;
 mod error;
 mod input;
 mod json_path;
-mod oauth;
 #[cfg(feature = "secure-storage")]
 mod keyring;
+mod oauth;
 mod output;
 mod pagination;
 mod priority;
@@ -883,10 +883,11 @@ fn main() -> Result<()> {
             .expect("Failed to create tokio runtime")
             .block_on(async_main())
     })?;
-    handler.join().unwrap()
+    let exit_code = handler.join().unwrap()?;
+    std::process::exit(exit_code);
 }
 
-async fn async_main() -> Result<()> {
+async fn async_main() -> Result<i32> {
     let cli = Cli::parse();
     if cli.no_color || cli.color_mode == ColorChoice::Never {
         colored::control::set_override(false);
@@ -958,57 +959,58 @@ async fn async_main() -> Result<()> {
         } else {
             println!("{}", serde_json::to_string_pretty(&schema)?);
         }
-        std::process::exit(0);
+        return Ok(0);
     }
 
-    // Set up pager for table output when stdout is a terminal
-    let _pager_guard = if should_use_pager(cli.no_pager, &cli.output, cli.quiet) {
-        setup_pager()
-    } else {
-        None
+    let exit_code = {
+        // Keep the pager guard scoped so cleanup runs before main exits.
+        let _pager_guard = if should_use_pager(cli.no_pager, &cli.output, cli.quiet) {
+            setup_pager()
+        } else {
+            None
+        };
+
+        let result = run_command(cli.command, &output, agent_opts, cli.retry).await;
+
+        match result {
+            Ok(()) => 0,
+            Err(e) => {
+                // Check if JSON output requested for structured errors
+                if output.is_json() {
+                    if let Some(cli_error) = e.downcast_ref::<CliError>() {
+                        let error_json = serde_json::json!({
+                            "error": true,
+                            "message": cli_error.message,
+                            "code": cli_error.code(),
+                            "details": cli_error.details,
+                            "retry_after": cli_error.retry_after,
+                        });
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&error_json).unwrap_or_else(|_| e.to_string())
+                        );
+                    } else {
+                        let error_json = serde_json::json!({
+                            "error": true,
+                            "message": e.to_string(),
+                            "code": categorize_error(&e),
+                            "details": null,
+                            "retry_after": null,
+                        });
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&error_json).unwrap_or_else(|_| e.to_string())
+                        );
+                    }
+                } else {
+                    eprintln!("Error: {}", e);
+                }
+                categorize_error(&e) as i32
+            }
+        }
     };
 
-    let result = run_command(cli.command, &output, agent_opts, cli.retry).await;
-
-    match result {
-        Ok(()) => std::process::exit(0),
-        Err(e) => {
-            // Check if JSON output requested for structured errors
-            if output.is_json() {
-                if let Some(cli_error) = e.downcast_ref::<CliError>() {
-                    let error_json = serde_json::json!({
-                        "error": true,
-                        "message": cli_error.message,
-                        "code": cli_error.code(),
-                        "details": cli_error.details,
-                        "retry_after": cli_error.retry_after,
-                    });
-                    eprintln!(
-                        "{}",
-                        serde_json::to_string(&error_json).unwrap_or_else(|_| e.to_string())
-                    );
-                } else {
-                    let error_json = serde_json::json!({
-                        "error": true,
-                        "message": e.to_string(),
-                        "code": categorize_error(&e),
-                        "details": null,
-                        "retry_after": null,
-                    });
-                    eprintln!(
-                        "{}",
-                        serde_json::to_string(&error_json).unwrap_or_else(|_| e.to_string())
-                    );
-                }
-            } else {
-                eprintln!("Error: {}", e);
-            }
-            std::process::exit(categorize_error(&e) as i32);
-        }
-    }
-
-    #[allow(unreachable_code)]
-    Ok(())
+    Ok(exit_code)
 }
 
 /// Categorize error for exit codes: 1=general error, 2=not found, 3=auth error
@@ -1250,17 +1252,29 @@ fn setup_pager() -> Option<PagerGuard> {
         Err(_) => return None, // Pager not available, continue without it
     };
 
-    let child_stdin = child.stdin.take()?;
+    let Some(child_stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
 
-    // Redirect stdout (fd 1) to the pager's stdin using dup2.
     #[cfg(unix)]
     {
         use std::os::unix::io::AsRawFd;
         let pager_fd = child_stdin.as_raw_fd();
-        unsafe { libc::dup2(pager_fd, 1); }
+        let stdout_redirect = match StdoutRedirectGuard::redirect_to(pager_fd) {
+            Ok(guard) => Some(guard),
+            Err(_) => {
+                drop(child_stdin);
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        };
         Some(PagerGuard {
             child,
-            _stdin: Some(child_stdin),
+            stdin: Some(child_stdin),
+            stdout_redirect,
         })
     }
 
@@ -1276,15 +1290,192 @@ fn setup_pager() -> Option<PagerGuard> {
 /// Guard that waits for the pager process to exit when dropped
 struct PagerGuard {
     child: std::process::Child,
-    _stdin: Option<std::process::ChildStdin>,
+    stdin: Option<std::process::ChildStdin>,
+    #[cfg(unix)]
+    stdout_redirect: Option<StdoutRedirectGuard>,
 }
 
 impl Drop for PagerGuard {
     fn drop(&mut self) {
-        // Close stdin pipe first so the pager knows we're done
-        self._stdin.take();
+        #[cfg(unix)]
+        {
+            // Restore stdout before shutting down the pager; macOS terminal state is
+            // sensitive to pager teardown when fd 1 still points at the pager pipe.
+            self.stdout_redirect.take();
+        }
+
+        // Close stdin pipe so the pager sees EOF.
+        self.stdin.take();
         // Then wait for pager to finish
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(unix)]
+struct StdoutRedirectGuard {
+    saved_stdout_fd: i32,
+}
+
+#[cfg(unix)]
+impl StdoutRedirectGuard {
+    fn redirect_to(target_fd: i32) -> std::io::Result<Self> {
+        let saved_stdout_fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if saved_stdout_fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        if unsafe { libc::dup2(target_fd, libc::STDOUT_FILENO) } < 0 {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(saved_stdout_fd);
+            }
+            return Err(err);
+        }
+
+        Ok(Self { saved_stdout_fd })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StdoutRedirectGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::dup2(self.saved_stdout_fd, libc::STDOUT_FILENO);
+            libc::close(self.saved_stdout_fd);
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    #[cfg(unix)]
+    static STDOUT_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[cfg(unix)]
+    fn stdout_test_lock() -> &'static Mutex<()> {
+        STDOUT_TEST_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[cfg(unix)]
+    struct Pipe {
+        read_fd: i32,
+        write_fd: i32,
+    }
+
+    #[cfg(unix)]
+    impl Pipe {
+        fn new() -> Self {
+            let mut fds = [0; 2];
+            let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+            assert_eq!(
+                rc,
+                0,
+                "pipe creation failed: {}",
+                std::io::Error::last_os_error()
+            );
+            Self {
+                read_fd: fds[0],
+                write_fd: fds[1],
+            }
+        }
+
+        fn read_available(&self) -> String {
+            let flags = unsafe { libc::fcntl(self.read_fd, libc::F_GETFL) };
+            assert!(
+                flags >= 0,
+                "fcntl(F_GETFL) failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let rc = unsafe { libc::fcntl(self.read_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+            assert!(
+                rc >= 0,
+                "fcntl(F_SETFL) failed: {}",
+                std::io::Error::last_os_error()
+            );
+
+            let mut bytes = Vec::new();
+            let mut buf = [0_u8; 256];
+
+            loop {
+                let read = unsafe { libc::read(self.read_fd, buf.as_mut_ptr().cast(), buf.len()) };
+                if read > 0 {
+                    bytes.extend_from_slice(&buf[..read as usize]);
+                    continue;
+                }
+                if read == 0 {
+                    break;
+                }
+
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(code) if code == libc::EAGAIN || code == libc::EWOULDBLOCK => break,
+                    _ => panic!("read failed: {err}"),
+                }
+            }
+
+            String::from_utf8(bytes).expect("pipe output should be valid utf-8")
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_stdout(text: &str) {
+        let bytes = text.as_bytes();
+        let written =
+            unsafe { libc::write(libc::STDOUT_FILENO, bytes.as_ptr().cast(), bytes.len()) };
+        assert_eq!(
+            written,
+            bytes.len() as isize,
+            "stdout write failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+
+    #[cfg(unix)]
+    impl Drop for Pipe {
+        fn drop(&mut self) {
+            unsafe {
+                libc::close(self.read_fd);
+                libc::close(self.write_fd);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_stdout_redirect_guard_restores_previous_stdout() {
+        let _stdout_lock = stdout_test_lock().lock().unwrap();
+        let outer_pipe = Pipe::new();
+        let inner_pipe = Pipe::new();
+
+        let outer_guard = StdoutRedirectGuard::redirect_to(outer_pipe.write_fd)
+            .expect("outer stdout redirect should succeed");
+
+        {
+            let inner_guard = StdoutRedirectGuard::redirect_to(inner_pipe.write_fd)
+                .expect("inner stdout redirect should succeed");
+            write_stdout("inner redirect\n");
+            drop(inner_guard);
+        }
+
+        write_stdout("restored outer redirect\n");
+
+        drop(outer_guard);
+
+        let inner_output = inner_pipe.read_available();
+        let outer_output = outer_pipe.read_available();
+
+        assert!(
+            inner_output.contains("inner redirect\n"),
+            "inner pipe should capture redirected stdout, got: {inner_output:?}"
+        );
+        assert!(
+            outer_output.contains("restored outer redirect\n"),
+            "outer pipe should receive stdout after restoration, got: {outer_output:?}"
+        );
     }
 }
 
@@ -1809,13 +2000,13 @@ async fn complete_statuses(
     };
 
     // Check cache for statuses
-    let states =
-        if let Some(cached) = cache.and_then(|c| c.get_keyed(cache::CacheType::Statuses, &team_id))
-        {
-            cached["states"].as_array().cloned().unwrap_or_default()
-        } else {
-            // Fetch from API
-            let query = r#"
+    let states = if let Some(cached) =
+        cache.and_then(|c| c.get_keyed(cache::CacheType::Statuses, &team_id))
+    {
+        cached["states"].as_array().cloned().unwrap_or_default()
+    } else {
+        // Fetch from API
+        let query = r#"
                 query($teamId: String!) {
                     team(id: $teamId) {
                         states {
@@ -1829,17 +2020,17 @@ async fn complete_statuses(
                 }
             "#;
 
-            match client
-                .query(query, Some(serde_json::json!({ "teamId": team_id })))
-                .await
-            {
-                Ok(result) => result["data"]["team"]["states"]["nodes"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default(),
-                Err(_) => return Ok(()),
-            }
-        };
+        match client
+            .query(query, Some(serde_json::json!({ "teamId": team_id })))
+            .await
+        {
+            Ok(result) => result["data"]["team"]["states"]["nodes"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+            Err(_) => return Ok(()),
+        }
+    };
 
     let prefix_lower = prefix.to_lowercase();
     for state in &states {
