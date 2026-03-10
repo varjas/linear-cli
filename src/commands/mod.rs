@@ -31,6 +31,7 @@ pub mod teams;
 pub mod templates;
 pub mod time;
 pub mod triage;
+pub mod update;
 pub mod uploads;
 pub mod users;
 pub mod views;

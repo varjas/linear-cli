@@ -23,10 +23,25 @@ fn test_help_command() {
 }
 
 #[test]
+fn test_update_in_top_level_help() {
+    let (code, stdout, _stderr) = run_cli(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("update"));
+}
+
+#[test]
 fn test_version_command() {
     let (code, stdout, _stderr) = run_cli(&["--version"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("linear") || stdout.contains("0.1"));
+}
+
+#[test]
+fn test_update_help() {
+    let (code, stdout, _stderr) = run_cli(&["update", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--check"));
+    assert!(stdout.contains("linear-cli update"));
 }
 
 #[test]
@@ -1926,4 +1941,3 @@ fn test_yes_flag_works_with_subcommand() {
         "--yes flag should not interfere with subcommand parsing"
     );
 }
-

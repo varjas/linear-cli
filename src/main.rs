@@ -25,7 +25,7 @@ use commands::{
     attachments, auth, bulk, comments, cycles, doctor, documents, export, favorites, git, history,
     import, initiatives, interactive, issues, labels, metrics, notifications, project_updates,
     projects, relations, roadmaps, search, sprint, statuses, sync, teams, templates, time, triage,
-    uploads, users, views, watch, webhooks,
+    update, uploads, users, views, watch, webhooks,
 };
 use error::CliError;
 use output::print_json_owned;
@@ -279,6 +279,15 @@ enum Commands {
     Common,
     /// Show agent-focused capabilities and examples
     Agent,
+    /// Check for and install the latest released version of linear-cli
+    #[command(after_help = r#"EXAMPLES:
+    linear-cli update
+    linear-cli update --check"#)]
+    Update {
+        /// Check whether a newer release exists without installing it
+        #[arg(long)]
+        check: bool,
+    },
     /// Manage issue attachments - list, create, update, delete, link URLs
     #[command(alias = "att")]
     #[command(after_help = r#"EXAMPLES:
@@ -962,6 +971,12 @@ async fn async_main() -> Result<i32> {
         return Ok(0);
     }
 
+    if should_check_for_updates(&cli) {
+        if let Some(exit_code) = update::maybe_prompt_for_update(cli.yes).await? {
+            return Ok(exit_code);
+        }
+    }
+
     let exit_code = {
         // Keep the pager guard scoped so cleanup runs before main exits.
         let _pager_guard = if should_use_pager(cli.no_pager, &cli.output, cli.quiet) {
@@ -1011,6 +1026,32 @@ async fn async_main() -> Result<i32> {
     };
 
     Ok(exit_code)
+}
+
+fn should_check_for_updates(cli: &Cli) -> bool {
+    if cli.quiet || cli.schema {
+        return false;
+    }
+
+    if matches!(cli.output, OutputFormat::Json | OutputFormat::Ndjson) {
+        return false;
+    }
+
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return false;
+    }
+
+    !matches!(
+        &cli.command,
+        Commands::Update { .. }
+            | Commands::Common
+            | Commands::Agent
+            | Commands::Completions { .. }
+            | Commands::Complete { .. }
+            | Commands::Config {
+                action: ConfigCommands::Completions { .. },
+            }
+    )
 }
 
 /// Categorize error for exit codes: 1=general error, 2=not found, 3=auth error
@@ -1080,6 +1121,7 @@ async fn run_command(
             println!("  See docs/json/ for sample outputs.");
             println!("  Use --schema to print the current schema version.");
         }
+        Commands::Update { check } => update::handle(check, output, agent_opts).await?,
         Commands::Projects { action } => projects::handle(action, output).await?,
         Commands::ProjectUpdates { action } => project_updates::handle(action, output).await?,
         Commands::Issues { action } => issues::handle(action, output, agent_opts).await?,

@@ -26,6 +26,24 @@ cd linear-cli && cargo build --release
 
 Pre-built binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) are available at [GitHub Releases](https://github.com/Finesssee/linear-cli/releases). [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads these automatically.
 
+## Updating
+
+```bash
+# Recommended: let the CLI update itself
+linear-cli update
+
+# Check without installing
+linear-cli update --check
+
+# Manual fallback when you want the Cargo path directly
+cargo install linear-cli --force
+
+# Manual fallback for keyring-enabled builds
+cargo install linear-cli --force --features secure-storage
+```
+
+`cargo update` updates a project's `Cargo.lock`. It does not upgrade an installed `linear-cli` binary.
+
 ## Quick Start
 
 ```bash
