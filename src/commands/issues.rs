@@ -585,16 +585,8 @@ async fn list_issues(
         filter["state"] = json!({ "name": { "eqIgnoreCase": s } });
     }
     if let Some(a) = assignee {
-        if a.eq_ignore_ascii_case("me") {
-            let query = r#"query { viewer { id } }"#;
-            let result = client.query(query, None).await?;
-            let viewer_id = result["data"]["viewer"]["id"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("Could not fetch current user ID"))?;
-            filter["assignee"] = json!({ "id": { "eq": viewer_id } });
-        } else {
-            filter["assignee"] = json!({ "name": { "eqIgnoreCase": a } });
-        }
+        let user_id = resolve_user_id(&client, &a, &output.cache).await?;
+        filter["assignee"] = json!({ "id": { "eq": user_id } });
     }
     if let Some(p) = project {
         filter["project"] = json!({ "name": { "eqIgnoreCase": p } });
